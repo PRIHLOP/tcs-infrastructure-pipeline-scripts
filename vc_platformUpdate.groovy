@@ -1,8 +1,10 @@
 import jobs.scripts.*
 
 node {
+    properties([disableConcurrentBuilds()])
+
     def SETTINGS
-    
+
     stage('Init'){
         deleteDir()
         checkout scm
@@ -16,14 +18,27 @@ node {
     psfolder = "${env.WORKSPACE}\\resources\\virtocommerce"
     dir(psfolder){
 
+        def envChoices
         stage('User Input'){
-            timeout(time: 30, unit: 'MINUTES'){
-                def envChoices = input(message: "Choose environment to update", parameters: [choice(name: 'Environments', choices:"Dev\nProduction")])
+            SETTINGS.setEnvironment('platform')
+            timeout(time: "${SETTINGS['timeoutMinutes']}", unit: 'MINUTES'){
+                envChoices = input(message: "Choose environment to update", parameters: [choice(name: 'Environments', choices:"Dev\nProduction")])
                 if(envChoices == 'Dev'){
                     envChoices = ""
                 }
                 else if (envChoices == 'Production'){
                     envChoices = "staging"
+                }
+            }
+        }
+
+        stage('ARM Deploy'){
+            timestamps{
+                if(envChoices == ""){
+                    Utilities.createInfrastructure(this, "DEV-VC")  // DEV-VC ? PROD-VC
+                }
+                else {
+                    Utilities.createInfrastructure(this, "PROD-VC")
                 }
             }
         }
@@ -41,7 +56,8 @@ node {
 
         stage('E2E'){
             timestamps{
-                timeout(time: 20, unit: 'MINUTES'){
+                SETTINGS.setEnvironment('platform')
+                timeout(time: "${SETTINGS['timeoutMinutes']}", unit: 'MINUTES'){
                     try{
                         Utilities.runE2E(this)
                         def e2eStatus = "E2E Success"
@@ -62,10 +78,15 @@ node {
 
         stage('SwapSlot'){
             timestamps{
-                powershell "${psfolder}\\SwapSlot.ps1"
+                SETTINGS.setEnvironment('platform')
+                withEnv([
+                    "AzureSubscriptionIDProd=${SETTINGS['subscriptionID']}", "AzureResourceGroupNameProd=${SETTINGS['resourceGroupName']}",
+                    "AzureWebAppAdminNameProd=${SETTINGS['appName']}", "AzureSlotNameProd=${SETTINGS['slotName']}"]){
+                    powershell "${psfolder}\\SwapSlot.ps1"
+                }
             }
         }
-        
+
         stage('Cleanup'){
             timestamps{
                 Packaging.cleanSolutions(this)
